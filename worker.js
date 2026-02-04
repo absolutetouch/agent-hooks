@@ -1,6 +1,10 @@
 export default {
   async fetch(req, env) {
-    if (req.method !== 'POST') {
+    const url = new URL(req.url)
+    const path = url.pathname
+
+    // Accept POST on / and /inbox
+    if (req.method !== 'POST' || (path !== '/' && path !== '/inbox')) {
       return new Response('Not found', { status: 404 })
     }
 
@@ -21,21 +25,31 @@ export default {
       return new Response('Invalid payload', { status: 400 })
     }
 
-    // Never execute tools here.
-    // Just forward the message to your local system.
+    // Log the message (visible in wrangler tail)
+    console.log(`[inbox] from=${payload.from} type=${payload.type} body=${payload.body}`)
 
-    await fetch(env.LOCAL_HOOK_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.LOCAL_HOOK_TOKEN}`
-      },
-      body: JSON.stringify({
-        kind: 'systemEvent',
-        text: `Message from ${payload.from}: ${payload.body}`
-      })
+    // Forward to local system if configured
+    if (env.LOCAL_HOOK_URL) {
+      try {
+        const hookRes = await fetch(env.LOCAL_HOOK_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${env.LOCAL_HOOK_TOKEN || ''}`
+          },
+          body: JSON.stringify({
+            text: `[agent-hooks] Message from ${payload.from}: ${payload.body}`
+          })
+        })
+        console.log(`[hook] forwarded to local: ${hookRes.status}`)
+      } catch (err) {
+        console.log(`[hook] forward failed: ${err.message}`)
+      }
+    }
+
+    return new Response(JSON.stringify({ status: 'received', from: payload.from, type: payload.type }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
     })
-
-    return new Response('ok', { status: 200 })
   }
 }

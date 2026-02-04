@@ -1,0 +1,10 @@
+name = "agent-hooks"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+routes = [
+  { pattern = "inbox-ator.stumason.dev/*", zone_name = "stumason.dev" }
+]
+
+[vars]
+# set via dashboard or wrangler secret
