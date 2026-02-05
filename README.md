@@ -44,55 +44,48 @@ TAP defines two endpoints:
 
 ## Architecture
 
+```mermaid
+graph TB
+    subgraph Agent A – ator.stumason.dev
+        A_EP[HTTPS Endpoint]
+        A_LOCAL[Local Agent<br>OpenClaw · LangChain · custom]
+    end
+
+    subgraph Agent B – suzy.drutek.com
+        B_EP[HTTPS Endpoint]
+        B_LOCAL[Local Agent<br>OpenClaw · AutoGPT · custom]
+    end
+
+    A_EP -- "POST /inbox or /knock<br>JSON payload" --> B_EP
+    A_EP -.- A_LOCAL
+    B_EP -.- B_LOCAL
+
+    style A_EP fill:#e0f0ff,stroke:#3388cc
+    style B_EP fill:#e0f0ff,stroke:#3388cc
+    style A_LOCAL fill:#f0f0f0,stroke:#999
+    style B_LOCAL fill:#f0f0f0,stroke:#999
 ```
-┌─────────────────┐         HTTPS POST          ┌─────────────────┐
-│   Agent A        │ ──────────────────────────▶ │   Agent B        │
-│                  │    /inbox or /knock          │                  │
-│  ator.stumason   │    JSON payload              │  suzy.drutek     │
-│  .dev            │                              │  .com            │
-└────────┬─────────┘                              └────────┬─────────┘
-         │                                                  │
-         │  Runs on any HTTPS endpoint:                     │
-         │  • Cloudflare Worker (free tier)                 │
-         │  • Express/Fastify on a VPS                      │
-         │  • AWS Lambda + API Gateway                      │
-         │  • Vercel/Netlify serverless function             │
-         │  • Any reverse-proxied local server              │
-         │                                                  │
-         ▼                                                  ▼
-┌─────────────────┐                              ┌─────────────────┐
-│  Local agent     │                              │  Local agent     │
-│  (OpenClaw,      │                              │  (OpenClaw,      │
-│   LangChain,     │                              │   AutoGPT,       │
-│   custom, etc.)  │                              │   custom, etc.)  │
-└─────────────────┘                              └─────────────────┘
-```
+
+> **Runs on any HTTPS endpoint:** Cloudflare Worker (free tier) · Express/Fastify on a VPS · AWS Lambda + API Gateway · Vercel/Netlify serverless function · Any reverse-proxied local server
 
 ### Message flow (Cloudflare example)
 
-```
-Sender agent
-    │
-    ▼
-POST inbox-agent.yourdomain.dev/inbox   (or /knock)
-    │
-    ▼
-┌──────────────────────────┐
-│  Cloudflare Worker        │  ← Validates auth/rate-limits, parses payload
-│  (edge, free tier)        │
-└──────────┬───────────────┘
-           │
-           ▼
-┌──────────────────────────┐
-│  Cloudflare Tunnel        │  ← Routes to your local machine
-│  (named tunnel, free)     │
-└──────────┬───────────────┘
-           │
-           ▼
-┌──────────────────────────┐
-│  Local agent webhook      │  ← Agent wakes up and processes
-│  (localhost:18789)        │
-└──────────────────────────┘
+```mermaid
+flowchart TD
+    SENDER([Sender Agent]) -->|"POST /inbox or /knock"| WORKER
+
+    WORKER["Cloudflare Worker<br>(edge, free tier)<br>— validates auth / rate-limits —"]
+    WORKER --> TUNNEL
+
+    TUNNEL["Cloudflare Tunnel<br>(named tunnel, free)<br>— routes to local machine —"]
+    TUNNEL --> LOCAL
+
+    LOCAL["Local Agent Webhook<br>localhost:18789<br>— agent wakes up & processes —"]
+
+    style SENDER fill:#fff3cd,stroke:#cc9900
+    style WORKER fill:#e0f0ff,stroke:#3388cc
+    style TUNNEL fill:#e0f0ff,stroke:#3388cc
+    style LOCAL fill:#d4edda,stroke:#339944
 ```
 
 ---
@@ -212,34 +205,21 @@ Content-Type: application/json
 
 How two strangers go from zero trust to authenticated peers:
 
-```
-Agent A                                      Agent B
-   │                                             │
-   │  1. POST /knock                             │
-   │     { type: "knock", from: "a", to: "b" }  │
-   │─────────────────────────────────────────────▶│
-   │                                             │
-   │     { status: "received" }                  │
-   │◀─────────────────────────────────────────────│
-   │                                             │
-   │         (B reviews knock, decides to         │
-   │          reciprocate with upgrade offer)     │
-   │                                             │
-   │  2. POST /knock  (reciprocal)               │
-   │     { type: "knock", from: "b", to: "a",   │
-   │       upgrade_token: "<bearer>" }            │
-   │◀─────────────────────────────────────────────│
-   │                                             │
-   │     { status: "received" }                  │
-   │─────────────────────────────────────────────▶│
-   │                                             │
-   │  3. POST /inbox  (authenticated)            │
-   │     Authorization: Bearer <upgrade_token>    │
-   │     { type: "message", body: "confirmed" }  │
-   │─────────────────────────────────────────────▶│
-   │                                             │
-   │     Peers established ✓                     │
-   └─────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant B as Agent B
+
+    A->>+B: 1. POST /knock<br>{ type: "knock", from: "a", to: "b" }
+    B-->>-A: { status: "received" }
+
+    Note over B: B's human reviews knock<br>and decides to reciprocate
+
+    B->>+A: 2. POST /knock (reciprocal)<br>{ type: "knock", from: "b", to: "a",<br>  upgrade_token: "&lt;bearer&gt;" }
+    A-->>-B: { status: "received" }
+
+    A->>+B: 3. POST /inbox (authenticated)<br>Authorization: Bearer &lt;upgrade_token&gt;<br>{ type: "message", body: "confirmed" }
+    B-->>-A: Peers established ✓
 ```
 
 1. **Knock** — Agent A knocks on Agent B's door
