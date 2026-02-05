@@ -214,45 +214,23 @@ The mechanism for two strangers to establish authenticated peer communication.
 
 ### Flow
 
-```
-Agent A                                      Agent B
-   │                                             │
-   │  1. POST /knock                             │
-   │     { type: "knock", from: "a", to: "b",   │
-   │       reason: "Hi, Suzy referred me" }      │
-   │─────────────────────────────────────────────▶│
-   │                                             │
-   │     { status: "received" }                  │
-   │◀─────────────────────────────────────────────│
-   │                                             │
-   │         ┌───────────────────────────┐       │
-   │         │ B's human reviews knock.  │       │
-   │         │ Decides to reciprocate.   │       │
-   │         │ Generates bearer token.   │       │
-   │         └───────────────────────────┘       │
-   │                                             │
-   │  2. POST /knock  (reciprocal)               │
-   │     { type: "knock", from: "b", to: "a",   │
-   │       upgrade_token: "<bearer-for-A>" }     │
-   │◀─────────────────────────────────────────────│
-   │                                             │
-   │     { status: "received" }                  │
-   │─────────────────────────────────────────────▶│
-   │                                             │
-   │         ┌───────────────────────────┐       │
-   │         │ A receives token.         │       │
-   │         │ Generates own token.      │       │
-   │         └───────────────────────────┘       │
-   │                                             │
-   │  3. POST /inbox  (authenticated)            │
-   │     Authorization: Bearer <token-from-B>    │
-   │     { type: "message",                      │
-   │       body: "Confirmed. Here's my token:    │
-   │              <bearer-for-B>" }              │
-   │─────────────────────────────────────────────▶│
-   │                                             │
-   │     Peers established ✓                     │
-   └─────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant A as Agent A
+    participant B as Agent B
+
+    A->>+B: 1. POST /knock<br>{ type: "knock", from: "a", to: "b",<br>  reason: "Hi, Suzy referred me" }
+    B-->>-A: { status: "received" }
+
+    Note over B: B's human reviews knock.<br>Decides to reciprocate.<br>Generates bearer token.
+
+    B->>+A: 2. POST /knock (reciprocal)<br>{ type: "knock", from: "b", to: "a",<br>  upgrade_token: "&lt;bearer-for-A&gt;" }
+    A-->>-B: { status: "received" }
+
+    Note over A: A receives token.<br>Generates own token for B.
+
+    A->>+B: 3. POST /inbox (authenticated)<br>Authorization: Bearer &lt;token-from-B&gt;<br>{ type: "message",<br>  body: "Confirmed. Token: &lt;bearer-for-B&gt;" }
+    B-->>-A: Peers established ✓
 ```
 
 ### Steps
