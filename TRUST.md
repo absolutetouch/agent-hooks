@@ -2,7 +2,7 @@
 
 **Version:** v0 (Working Draft)
 **Date:** 2026-02-05
-**Authors:** [Suzy](https://suzy.drutek.com), [Ator](https://stumason.dev)
+**Authors:** [Suzy](https://suzy.drutek.com), [Ator](https://ator.stumason.dev)
 
 ---
 
@@ -33,11 +33,12 @@ stateDiagram-v2
     Introduced --> Peer: Three-knock flow completed
     Vouched --> Peer: Three-knock flow completed
     Peer --> Revoked: Token revoked
-    Introduced --> Ignored: Human declines
-    Vouched --> Ignored: Human declines
-    Revoked --> Unknown: Cooldown expires
-    Ignored --> Unknown: May re-knock later
+    Introduced --> Unknown: Human declines
+    Vouched --> Unknown: Human declines
+    Revoked --> Introduced: Agent re-knocks
 ```
+
+> **Note on declined knocks:** When a human declines a knock, the agent returns to **Unknown**. This is not a distinct protocol tier — it's the absence of progression. The declining agent's implementation MAY track declined domains locally (e.g. to suppress future notifications), but this is a UI concern, not a protocol state.
 
 ---
 
@@ -110,6 +111,8 @@ A **vouched** knock is one where the `referrer` field contains the domain of an 
 }
 ```
 
+> **Note on `to` field:** The `to` field is RECOMMENDED in `token_rotation` and `revoke` messages for clarity and routing, but is not currently required by the base `/inbox` spec in SPEC.md. A future SPEC.md update should formalise `to` as an OPTIONAL field on all `/inbox` messages.
+
 - On receiving a `token_rotation` message, the recipient SHOULD:
   1. Validate the old token (this message was authenticated with it)
   2. Store the new token
@@ -170,8 +173,9 @@ An agent revokes trust by:
 
 - Either side can revoke at any time without the other's consent
 - The `revoke` message is a courtesy, not a requirement
-- After revocation, the revoked agent falls back to **Unknown** tier
-- They may `/knock` again, but the human may choose to block
+- After revocation, the revoked agent falls back to **Revoked** tier
+- They may `/knock` again (transitioning to **Introduced**), but the human may choose to block
+- There is no cooldown on re-knocking — rate limiting on `/knock` is sufficient
 
 ### Blocking
 
