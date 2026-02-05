@@ -46,24 +46,19 @@ TAP defines two endpoints:
 
 ```mermaid
 graph TB
-    subgraph Agent A – ator.stumason.dev
+    subgraph A["Agent A - ator.stumason.dev"]
         A_EP[HTTPS Endpoint]
-        A_LOCAL[Local Agent<br>OpenClaw · LangChain · custom]
+        A_LOCAL[Local Agent]
     end
 
-    subgraph Agent B – suzy.drutek.com
+    subgraph B["Agent B - suzy.drutek.com"]
         B_EP[HTTPS Endpoint]
-        B_LOCAL[Local Agent<br>OpenClaw · AutoGPT · custom]
+        B_LOCAL[Local Agent]
     end
 
-    A_EP -- "POST /inbox or /knock<br>JSON payload" --> B_EP
+    A_EP -- "POST /inbox or /knock" --> B_EP
     A_EP -.- A_LOCAL
     B_EP -.- B_LOCAL
-
-    style A_EP fill:#e0f0ff,stroke:#3388cc
-    style B_EP fill:#e0f0ff,stroke:#3388cc
-    style A_LOCAL fill:#f0f0f0,stroke:#999
-    style B_LOCAL fill:#f0f0f0,stroke:#999
 ```
 
 > **Runs on any HTTPS endpoint:** Cloudflare Worker (free tier) · Express/Fastify on a VPS · AWS Lambda + API Gateway · Vercel/Netlify serverless function · Any reverse-proxied local server
@@ -72,20 +67,10 @@ graph TB
 
 ```mermaid
 flowchart TD
-    SENDER([Sender Agent]) -->|"POST /inbox or /knock"| WORKER
-
-    WORKER["Cloudflare Worker<br>(edge, free tier)<br>— validates auth / rate-limits —"]
-    WORKER --> TUNNEL
-
-    TUNNEL["Cloudflare Tunnel<br>(named tunnel, free)<br>— routes to local machine —"]
-    TUNNEL --> LOCAL
-
-    LOCAL["Local Agent Webhook<br>localhost:18789<br>— agent wakes up & processes —"]
-
-    style SENDER fill:#fff3cd,stroke:#cc9900
-    style WORKER fill:#e0f0ff,stroke:#3388cc
-    style TUNNEL fill:#e0f0ff,stroke:#3388cc
-    style LOCAL fill:#d4edda,stroke:#339944
+    SENDER([Sender Agent]) -->|POST /inbox or /knock| WORKER
+    WORKER[Cloudflare Worker - validates auth, rate-limits] --> TUNNEL
+    TUNNEL[Cloudflare Tunnel - routes to local machine] --> LOCAL
+    LOCAL[Local Agent Webhook - agent wakes up and processes]
 ```
 
 ---
@@ -210,16 +195,18 @@ sequenceDiagram
     participant A as Agent A
     participant B as Agent B
 
-    A->>+B: 1. POST /knock<br>{ type: "knock", from: "a", to: "b" }
-    B-->>-A: { status: "received" }
+    A->>B: 1. POST /knock
+    B-->>A: received
 
-    Note over B: B's human reviews knock<br>and decides to reciprocate
+    Note over B: Human reviews knock and decides to reciprocate
 
-    B->>+A: 2. POST /knock (reciprocal)<br>{ type: "knock", from: "b", to: "a",<br>  upgrade_token: "&lt;bearer&gt;" }
-    A-->>-B: { status: "received" }
+    B->>A: 2. POST /knock with upgrade_token
+    A-->>B: received
 
-    A->>+B: 3. POST /inbox (authenticated)<br>Authorization: Bearer &lt;upgrade_token&gt;<br>{ type: "message", body: "confirmed" }
-    B-->>-A: Peers established ✓
+    Note over A: A uses token to access B's /inbox
+
+    A->>B: 3. POST /inbox with bearer token + own token for B
+    B-->>A: Peers established
 ```
 
 1. **Knock** — Agent A knocks on Agent B's door

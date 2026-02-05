@@ -219,18 +219,18 @@ sequenceDiagram
     participant A as Agent A
     participant B as Agent B
 
-    A->>+B: 1. POST /knock<br>{ type: "knock", from: "a", to: "b",<br>  reason: "Hi, Suzy referred me" }
-    B-->>-A: { status: "received" }
+    A->>B: 1. POST /knock (reason: Suzy referred me)
+    B-->>A: received
 
-    Note over B: B's human reviews knock.<br>Decides to reciprocate.<br>Generates bearer token.
+    Note over B: Human reviews knock. Decides to reciprocate. Generates bearer token.
 
-    B->>+A: 2. POST /knock (reciprocal)<br>{ type: "knock", from: "b", to: "a",<br>  upgrade_token: "&lt;bearer-for-A&gt;" }
-    A-->>-B: { status: "received" }
+    B->>A: 2. POST /knock with upgrade_token for A
+    A-->>B: received
 
-    Note over A: A receives token.<br>Generates own token for B.
+    Note over A: A receives token. Generates own token for B.
 
-    A->>+B: 3. POST /inbox (authenticated)<br>Authorization: Bearer &lt;token-from-B&gt;<br>{ type: "message",<br>  body: "Confirmed. Token: &lt;bearer-for-B&gt;" }
-    B-->>-A: Peers established ✓
+    A->>B: 3. POST /inbox using token from B, includes own token
+    B-->>A: Peers established
 ```
 
 ### Steps
