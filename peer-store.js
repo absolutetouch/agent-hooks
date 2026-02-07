@@ -24,6 +24,7 @@ function createPeer(peerId, displayName, endpoints, labels = {}, annotations = {
     annotations: annotations,
     created_at: now,
     updated_at: now,
+    last_contact: null, // Updated when we receive/send a message
     version: 1
   };
 }
@@ -144,10 +145,16 @@ export class PeerStore {
     const list = await this.kv.list({ prefix: PEER_PREFIX });
     const peerIds = new Set();
     
-    for (const key of list.keys) {
+    // Debug: log what we're getting
+    console.log(`[listPeers] Found ${list.keys?.length || 0} keys with prefix ${PEER_PREFIX}`);
+    
+    for (const key of (list.keys || [])) {
       // Extract peer_id from keys like "tap:peers:example.com:meta"
-      const match = key.name.match(/^tap:peers:([^:]+):meta$/);
+      // peer_id can contain dots (domain names) but not colons
+      const keyName = key.name || key;
+      const match = keyName.match(/^tap:peers:([^:]+):meta$/);
       if (match) {
+        console.log(`[listPeers] Found peer: ${match[1]}`);
         peerIds.add(match[1]);
       }
     }
@@ -155,11 +162,15 @@ export class PeerStore {
     const peers = [];
     for (const peerId of peerIds) {
       const peer = await this.getPeer(peerId);
-      if (peer && (!statusFilter || peer.status === statusFilter)) {
+      console.log(`[listPeers] getPeer(${peerId}):`, peer ? 'found' : 'null');
+      // Include peer if no filter OR if status matches filter
+      const includeThisPeer = !statusFilter || (peer && peer.status === statusFilter);
+      if (peer && includeThisPeer) {
         peers.push(peer);
       }
     }
 
+    console.log(`[listPeers] Returning ${peers.length} peers (filter: ${statusFilter || 'none'})`);
     return peers;
   }
 
@@ -289,6 +300,71 @@ export class PeerStore {
     }
 
     return { valid: false, reason: 'invalid_token' };
+  }
+
+  // ── Record Contact ────────────────────────────────────
+  // Update last_contact when we communicate with a peer
+  async recordContact(peerId) {
+    const meta = await this.kv.get(this._metaKey(peerId), { type: 'json' });
+    if (!meta) {
+      return { success: false, error: 'peer_not_found' };
+    }
+
+    meta.last_contact = new Date().toISOString();
+    meta.updated_at = meta.last_contact;
+    meta.version += 1;
+
+    await this.kv.put(this._metaKey(peerId), JSON.stringify(meta));
+    return { success: true, peer_id: peerId, last_contact: meta.last_contact };
+  }
+
+  // ── Check Trust Decay ─────────────────────────────────
+  // Returns peers that haven't been contacted in X days
+  // These might need attention or could be candidates for trust downgrade
+  async checkTrustDecay(maxDaysWithoutContact = 30) {
+    const peers = await this.listPeers('active');
+    const stale = [];
+    const now = Date.now();
+    const maxMs = maxDaysWithoutContact * 24 * 60 * 60 * 1000;
+
+    for (const peer of peers) {
+      if (!peer.last_contact) {
+        // Never contacted - flag as stale
+        stale.push({ ...peer, days_since_contact: null, reason: 'never_contacted' });
+      } else {
+        const lastContact = new Date(peer.last_contact).getTime();
+        const daysSince = Math.floor((now - lastContact) / (24 * 60 * 60 * 1000));
+        if (now - lastContact > maxMs) {
+          stale.push({ ...peer, days_since_contact: daysSince, reason: 'stale' });
+        }
+      }
+    }
+
+    return stale;
+  }
+
+  // ── Downgrade Trust ───────────────────────────────────
+  // Move peer from active to pending (soft downgrade) or revoked (hard downgrade)
+  async downgradeTrust(peerId, hard = false) {
+    const meta = await this.kv.get(this._metaKey(peerId), { type: 'json' });
+    if (!meta) {
+      return { success: false, error: 'peer_not_found' };
+    }
+
+    const newStatus = hard ? 'revoked' : 'pending';
+    meta.status = newStatus;
+    meta.updated_at = new Date().toISOString();
+    meta.version += 1;
+    meta.annotations = meta.annotations || {};
+    meta.annotations.downgrade_reason = 'trust_decay';
+    meta.annotations.downgrade_date = meta.updated_at;
+
+    await Promise.all([
+      this.kv.put(this._metaKey(peerId), JSON.stringify(meta)),
+      this.kv.put(this._statusKey(peerId), newStatus)
+    ]);
+
+    return { success: true, peer_id: peerId, new_status: newStatus };
   }
 }
 
