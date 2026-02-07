@@ -3,8 +3,13 @@ main = "worker.js"
 compatibility_date = "2025-01-01"
 
 routes = [
-  { pattern = "inbox-ator.stumason.dev/*", zone_name = "stumason.dev" }
+  { pattern = "inbox-ator.stumason.dev/*", zone_name = "stumason.dev" },
+  { pattern = "ator.stumason.dev/*", zone_name = "stumason.dev" }
 ]
+
+[[kv_namespaces]]
+binding = "TAP_KNOCKS"
+id = "7952414bf7434012850aa323e5c015c6"
 
 [vars]
 # set via dashboard or wrangler secret
