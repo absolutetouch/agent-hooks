@@ -5,6 +5,12 @@
 //                  Supports upgrade_token for Three-Knock trust upgrade flow
 //   POST /       — inbox (authenticated)
 //   POST /inbox  — inbox (authenticated)
+//   GET  /peers  — list peers (admin)
+//   POST /peers  — add peer (admin)
+//   POST /peers/:id/activate — activate peer (admin)
+//   POST /peers/:id/revoke — revoke peer (admin)
+
+import { PeerStore } from './peer-store.js';
 
 export default {
   async fetch(req, env) {
@@ -34,6 +40,11 @@ export default {
     // /inbox — authenticated
     if (req.method === "POST" && (path === "/" || path === "/inbox")) {
       return handleInbox(req, env);
+    }
+
+    // /peers — admin endpoints (requires ADMIN_SECRET)
+    if (path.startsWith("/peers")) {
+      return handlePeersAdmin(req, env, path);
     }
 
     return new Response("Not found", { status: 404 });
@@ -285,4 +296,127 @@ function knockError(status, message) {
       },
     }
   );
+}
+
+// ── Admin: Peer Management ──────────────────────────────────────────
+
+async function handlePeersAdmin(req, env, path) {
+  // Require admin auth
+  const auth = req.headers.get("authorization");
+  if (!auth || auth !== `Bearer ${env.ADMIN_SECRET}`) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { 
+      status: 401, 
+      headers: { "Content-Type": "application/json" } 
+    });
+  }
+
+  const store = new PeerStore(env.TAP_KNOCKS);
+
+  // GET /peers — list all peers
+  if (req.method === "GET" && path === "/peers") {
+    const status = new URL(req.url).searchParams.get("status");
+    const peers = await store.listPeers(status);
+    return new Response(JSON.stringify({ peers }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // POST /peers — add new peer
+  if (req.method === "POST" && path === "/peers") {
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), { 
+        status: 400, 
+        headers: { "Content-Type": "application/json" } 
+      });
+    }
+
+    const { peer_id, display_name, endpoints, bearer_token, labels, annotations } = body;
+    if (!peer_id || !endpoints || !bearer_token) {
+      return new Response(JSON.stringify({ error: "Missing required fields: peer_id, endpoints, bearer_token" }), { 
+        status: 400, 
+        headers: { "Content-Type": "application/json" } 
+      });
+    }
+
+    const result = await store.addPeer(peer_id, display_name || peer_id, endpoints, bearer_token, labels, annotations);
+    return new Response(JSON.stringify(result), {
+      status: result.success ? 201 : 409,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // GET /peers/:id — get single peer
+  const peerMatch = path.match(/^\/peers\/([^\/]+)$/);
+  if (req.method === "GET" && peerMatch) {
+    const peerId = decodeURIComponent(peerMatch[1]);
+    const peer = await store.getPeer(peerId);
+    if (!peer) {
+      return new Response(JSON.stringify({ error: "Peer not found" }), { 
+        status: 404, 
+        headers: { "Content-Type": "application/json" } 
+      });
+    }
+    return new Response(JSON.stringify(peer), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // POST /peers/:id/activate — activate peer
+  const activateMatch = path.match(/^\/peers\/([^\/]+)\/activate$/);
+  if (req.method === "POST" && activateMatch) {
+    const peerId = decodeURIComponent(activateMatch[1]);
+    const result = await store.activatePeer(peerId);
+    return new Response(JSON.stringify(result), {
+      status: result.success ? 200 : 404,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // POST /peers/:id/revoke — revoke peer
+  const revokeMatch = path.match(/^\/peers\/([^\/]+)\/revoke$/);
+  if (req.method === "POST" && revokeMatch) {
+    const peerId = decodeURIComponent(revokeMatch[1]);
+    const result = await store.revokePeer(peerId);
+    return new Response(JSON.stringify(result), {
+      status: result.success ? 200 : 404,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // POST /peers/:id/rotate — rotate key
+  const rotateMatch = path.match(/^\/peers\/([^\/]+)\/rotate$/);
+  if (req.method === "POST" && rotateMatch) {
+    const peerId = decodeURIComponent(rotateMatch[1]);
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), { 
+        status: 400, 
+        headers: { "Content-Type": "application/json" } 
+      });
+    }
+    const { new_bearer_token, old_key_id } = body;
+    if (!new_bearer_token) {
+      return new Response(JSON.stringify({ error: "Missing new_bearer_token" }), { 
+        status: 400, 
+        headers: { "Content-Type": "application/json" } 
+      });
+    }
+    const result = await store.rotateKey(peerId, new_bearer_token, old_key_id);
+    return new Response(JSON.stringify(result), {
+      status: result.success ? 200 : 404,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  return new Response(JSON.stringify({ error: "Not found" }), { 
+    status: 404, 
+    headers: { "Content-Type": "application/json" } 
+  });
 }
