@@ -358,6 +358,17 @@ async function handlePeersAdmin(req, env, path) {
     });
   }
 
+  // GET /peers/decay — check for stale peers (trust decay)
+  // NOTE: Must be before /peers/:id to avoid matching "decay" as peer ID
+  if (req.method === "GET" && path === "/peers/decay") {
+    const days = parseInt(new URL(req.url).searchParams.get("days") || "30");
+    const stale = await store.checkTrustDecay(days);
+    return new Response(JSON.stringify({ stale_peers: stale, threshold_days: days }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
   // GET /peers/:id — get single peer
   const peerMatch = path.match(/^\/peers\/([^\/]+)$/);
   if (req.method === "GET" && peerMatch) {
@@ -420,16 +431,6 @@ async function handlePeersAdmin(req, env, path) {
     const result = await store.rotateKey(peerId, new_bearer_token, old_key_id);
     return new Response(JSON.stringify(result), {
       status: result.success ? 200 : 404,
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-
-  // GET /peers/decay — check for stale peers (trust decay)
-  if (req.method === "GET" && path === "/peers/decay") {
-    const days = parseInt(new URL(req.url).searchParams.get("days") || "30");
-    const stale = await store.checkTrustDecay(days);
-    return new Response(JSON.stringify({ stale_peers: stale, threshold_days: days }), {
-      status: 200,
       headers: { "Content-Type": "application/json" }
     });
   }
