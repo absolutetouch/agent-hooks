@@ -145,16 +145,11 @@ export class PeerStore {
     const list = await this.kv.list({ prefix: PEER_PREFIX });
     const peerIds = new Set();
     
-    // Debug: log what we're getting
-    console.log(`[listPeers] Found ${list.keys?.length || 0} keys with prefix ${PEER_PREFIX}`);
-    
     for (const key of (list.keys || [])) {
       // Extract peer_id from keys like "tap:peers:example.com:meta"
-      // peer_id can contain dots (domain names) but not colons
       const keyName = key.name || key;
       const match = keyName.match(/^tap:peers:([^:]+):meta$/);
       if (match) {
-        console.log(`[listPeers] Found peer: ${match[1]}`);
         peerIds.add(match[1]);
       }
     }
@@ -162,15 +157,11 @@ export class PeerStore {
     const peers = [];
     for (const peerId of peerIds) {
       const peer = await this.getPeer(peerId);
-      console.log(`[listPeers] getPeer(${peerId}):`, peer ? 'found' : 'null');
-      // Include peer if no filter OR if status matches filter
-      const includeThisPeer = !statusFilter || (peer && peer.status === statusFilter);
-      if (peer && includeThisPeer) {
+      if (peer && (!statusFilter || peer.status === statusFilter)) {
         peers.push(peer);
       }
     }
 
-    console.log(`[listPeers] Returning ${peers.length} peers (filter: ${statusFilter || 'none'})`);
     return peers;
   }
 
