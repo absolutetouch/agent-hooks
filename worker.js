@@ -222,6 +222,15 @@ async function handleInbox(req, env) {
     `[inbox] from=${payload.from} type=${type} body=${payload.body.substring(0, 200)}`
   );
 
+  // Record contact from this peer (for trust decay tracking)
+  const store = new PeerStore(env.TAP_KNOCKS);
+  try {
+    await store.recordContact(payload.from);
+    console.log(`[inbox] recorded contact from ${payload.from}`);
+  } catch (err) {
+    console.log(`[inbox] failed to record contact: ${err.message}`);
+  }
+
   // Forward to OpenClaw via tunnel
   if (env.LOCAL_HOOK_URL) {
     try {
@@ -409,6 +418,32 @@ async function handlePeersAdmin(req, env, path) {
       });
     }
     const result = await store.rotateKey(peerId, new_bearer_token, old_key_id);
+    return new Response(JSON.stringify(result), {
+      status: result.success ? 200 : 404,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // GET /peers/decay — check for stale peers (trust decay)
+  if (req.method === "GET" && path === "/peers/decay") {
+    const days = parseInt(new URL(req.url).searchParams.get("days") || "30");
+    const stale = await store.checkTrustDecay(days);
+    return new Response(JSON.stringify({ stale_peers: stale, threshold_days: days }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // POST /peers/:id/downgrade — downgrade trust (soft: active→pending, hard: active→revoked)
+  const downgradeMatch = path.match(/^\/peers\/([^\/]+)\/downgrade$/);
+  if (req.method === "POST" && downgradeMatch) {
+    const peerId = decodeURIComponent(downgradeMatch[1]);
+    let body = {};
+    try {
+      body = await req.json();
+    } catch { /* optional body */ }
+    const hard = body.hard === true;
+    const result = await store.downgradeTrust(peerId, hard);
     return new Response(JSON.stringify(result), {
       status: result.success ? 200 : 404,
       headers: { "Content-Type": "application/json" }
