@@ -2,6 +2,7 @@
 // Routes:
 //   GET  /knock  — TAP discovery
 //   POST /knock  — TAP public knock (rate-limited, nonce+timestamp validated)
+//                  Supports upgrade_token for Three-Knock trust upgrade flow
 //   POST /       — inbox (authenticated)
 //   POST /inbox  — inbox (authenticated)
 
@@ -47,9 +48,10 @@ function handleKnockDiscovery() {
       agent: "ator",
       domain: "ator.stumason.dev",
       protocol: "tap/v0",
-      inbox: "inbox-ator.stumason.dev/inbox",
-      accepts: ["message", "knock"],
+      inbox: "ator.stumason.dev/inbox",
+      accepts: ["message", "knock", "trust_offer"],
       knock: true,
+      features: ["upgrade_token", "three_knock_flow"],
     }),
     {
       status: 200,
@@ -115,19 +117,31 @@ async function handleKnock(req, env) {
 
   // Accept — log it
   const referrer = payload.referrer || null;
+  const reason = payload.reason || null;
+  const upgradeToken = payload.upgrade_token || null;
+  
   await logKnock(env, {
     ip,
     now: nowISO,
     from,
     to,
     referrer,
+    reason,
     nonce,
+    upgrade_token: upgradeToken ? "[REDACTED]" : null, // Don't log actual tokens
     status: "accepted",
-    reason: null,
+    rejection_reason: null,
   });
 
   // Forward to OpenClaw via tunnel
   if (env.LOCAL_HOOK_URL) {
+    // Build message - include upgrade_token if present (this is a trust upgrade offer!)
+    let text = `[TAP knock] from=${from} to=${to}`;
+    if (referrer) text += ` referrer=${referrer}`;
+    if (reason) text += ` reason="${reason}"`;
+    if (upgradeToken) text += ` [UPGRADE OFFER - token provided]`;
+    text += ` nonce=${nonce}`;
+    
     try {
       const hookRes = await fetch(env.LOCAL_HOOK_URL, {
         method: "POST",
@@ -136,7 +150,17 @@ async function handleKnock(req, env) {
           Authorization: `Bearer ${env.LOCAL_HOOK_TOKEN || ""}`,
         },
         body: JSON.stringify({
-          text: `[TAP knock] from=${from} to=${to} referrer=${referrer || "none"} nonce=${nonce}`,
+          text,
+          // Include structured data for the agent to process
+          tap_knock: {
+            from,
+            to,
+            referrer,
+            reason,
+            upgrade_token: upgradeToken, // Pass the actual token to the agent
+            nonce,
+            timestamp: nowISO,
+          },
         }),
       });
       console.log(`[knock] forwarded to local: ${hookRes.status}`);
@@ -232,10 +256,12 @@ async function logKnock(env, data) {
         from: data.from || null,
         to: data.to || null,
         referrer: data.referrer || null,
+        reason: data.reason || null,
         nonce: data.nonce || null,
         timestamp: data.now,
         status: data.status,
-        reason: data.reason,
+        rejection_reason: data.rejection_reason || null,
+        has_upgrade_token: !!data.upgrade_token, // Track if this was an upgrade offer
       }),
       { expirationTtl: TTL_30_DAYS }
     );
