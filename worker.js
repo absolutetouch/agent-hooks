@@ -201,29 +201,72 @@ async function handleKnock(req, env) {
 
 async function handleInbox(req, env) {
   const auth = req.headers.get("authorization");
-  if (!auth || auth !== `Bearer ${env.SHARED_SECRET}`) {
-    return new Response("Unauthorized", { status: 401 });
+  const token = auth && auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  if (!token) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
   }
 
   let payload;
   try {
     payload = await req.json();
   } catch {
-    return new Response("Bad JSON", { status: 400 });
+    return new Response(JSON.stringify({ error: "Bad JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
   }
 
   if (!payload.from || !payload.body) {
-    return new Response("Invalid payload: from and body required", { status: 400 });
+    return new Response(JSON.stringify({ error: "Invalid payload: from and body required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+  }
+
+  // Fix 2: Validate `to` field — must be present and match our domain
+  if (!payload.to || payload.to !== "ator.stumason.dev") {
+    return new Response(JSON.stringify({ error: "Invalid or missing 'to' field" }), { status: 400, headers: { "Content-Type": "application/json" } });
+  }
+
+  // Fix 1: Per-peer token auth — try PeerStore first, fall back to SHARED_SECRET
+  const store = new PeerStore(env.TAP_KNOCKS);
+  let authed = false;
+  let authMethod = null;
+
+  // Try peer-specific token validation
+  const peerValidation = await store.validateToken(payload.from, token);
+  if (peerValidation.valid) {
+    authed = true;
+    authMethod = "peer_token";
+  }
+
+  // Fall back to SHARED_SECRET for backwards compat
+  if (!authed && env.SHARED_SECRET && token === env.SHARED_SECRET) {
+    authed = true;
+    authMethod = "shared_secret";
+  }
+
+  if (!authed) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
+
+  // Fix 3: Nonce replay protection
+  if (payload.nonce) {
+    const nonceKey = `nonce:${payload.nonce}`;
+    const seen = await env.TAP_KNOCKS.get(nonceKey);
+    if (seen) {
+      return new Response(JSON.stringify({ error: "Duplicate nonce" }), { status: 409, headers: { "Content-Type": "application/json" } });
+    }
+    await env.TAP_KNOCKS.put(nonceKey, "1", { expirationTtl: 600 }); // 10 min TTL
   }
 
   const type = payload.type || "message";
 
+  // Fix 5: Message type validation
+  const KNOWN_TYPES = ["ping", "message", "tip", "query", "alert"];
+  if (!KNOWN_TYPES.includes(type)) {
+    console.log(`[inbox] WARNING: unknown message type "${type}" from ${payload.from}`);
+  }
+
   console.log(
-    `[inbox] from=${payload.from} type=${type} body=${payload.body.substring(0, 200)}`
+    `[inbox] from=${payload.from} type=${type} auth=${authMethod} body=${payload.body.substring(0, 200)}`
   );
 
   // Record contact from this peer (for trust decay tracking)
-  const store = new PeerStore(env.TAP_KNOCKS);
   try {
     await store.recordContact(payload.from);
     console.log(`[inbox] recorded contact from ${payload.from}`);
@@ -364,6 +407,24 @@ async function handlePeersAdmin(req, env, path) {
     const days = parseInt(new URL(req.url).searchParams.get("days") || "30");
     const stale = await store.checkTrustDecay(days);
     return new Response(JSON.stringify({ stale_peers: stale, threshold_days: days }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+
+  // POST /peers/decay/run — actually run trust decay (downgrade stale peers)
+  if (req.method === "POST" && path === "/peers/decay/run") {
+    const days = parseInt(new URL(req.url).searchParams.get("days") || "30");
+    let body = {};
+    try { body = await req.json(); } catch { /* optional */ }
+    const hard = body.hard === true;
+    const stale = await store.checkTrustDecay(days);
+    const results = [];
+    for (const peer of stale) {
+      const result = await store.downgradeTrust(peer.peer_id, hard);
+      results.push({ peer_id: peer.peer_id, days_since_contact: peer.days_since_contact, reason: peer.reason, ...result });
+    }
+    return new Response(JSON.stringify({ downgraded: results, threshold_days: days, hard }), {
       status: 200,
       headers: { "Content-Type": "application/json" }
     });
